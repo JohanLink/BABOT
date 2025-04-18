@@ -1,0 +1,42 @@
+# Arduino compiled files
+*.cpp.o
+*.ino.cpp
+*.applet/
+*.hex
+*.elf
+
+# Build folder
+build/
+
+# Object files
+*.o
+*.obj
+
+# Precompiled files
+*.so
+*.dll
+*.dylib
+
+# Dependency files
+*.d
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Logs
+*.log
+
+# EEPROM
+*.eep
+
+# Sketch backups
+*.bak
+*.tmp
+
+# DS_Store
+.DS_Store
+
+# VSCode settings (if you're using it)
+.vscode/
