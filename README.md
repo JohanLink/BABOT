@@ -8,7 +8,7 @@ The open-source ball-balancing robot you build, program, and bring to life.
 3. Open-Source: Fully documented hardware and software for community collaboration.
 
 # 🚀 Getting Started
-Clone the Repository: git clone git@github.com:JohanLink/BABOT.git
+Clone the Repository
 
 # 🤝 Contributing
 We welcome contributions! Please fork the repository, make your changes, and submit a pull request. For major changes, open an issue first to discuss what you would like to change.
