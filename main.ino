@@ -3,110 +3,102 @@
 #include <math.h>
 
 // ---- PID Coefficients ----
-const float P_GAIN = 2.0;
+const float P_GAIN = 3;  
 const float I_GAIN = 0.1;
-const float D_GAIN = 30.0;
+const float D_GAIN = 40;  
 
-// ---- Smoothing Factors ----
-const float EMA_ALPHA = 0.9;    // Exponential moving average
-const float IR_ALPHA  = 0.5;    // IR signal low-pass filter
 
 // ---- Mechanical Constants ----
-const float DEG2RAD  = M_PI / 180.0;
-const float RAD2DEG  = 180.0 / M_PI;
-const float R1       = 50.0;                           // Servo arm length [mm]
-const float R2       = 39.2;                           // Passive link length [mm]
-const float BASE_R   = 32.9 / sqrt(3.0);               // Base triangle radius [mm]
-const float PLAT_R   = 107.9 / sqrt(3.0);              // Platform triangle radius [mm]
+const float DEG2RAD = M_PI / 180.0;
+const float RAD2DEG = 180.0 / M_PI;
+const float R1 = 50.0;                   // Servo arm length [mm]
+const float R2 = 39.2;                   // Passive link length [mm]
+const float BASE_R = 32.9 / sqrt(3.0);   // Base triangle radius [mm]
+const float PLAT_R = 107.9 / sqrt(3.0);  // Platform triangle radius [mm]
+const float PLATE_HEIGHT = 60;           // TOP PCB height [mm]
 
 // ---- Pin Assignments ----
 // Control
-const int BUTTON_PIN     = A1;
-const int LED_PIN        = 8;
+const int BUTTON_PIN = A1;
+const int LED_PIN = 8;
 
 // IR Sensor
-const int IR_LED_PIN     = 7;
-const int IR_RECEIVER_PIN= A0;
+const int IR_LED_PIN = 7;
+const int IR_RECEIVER_PIN = A0;
 
 // Digital Potentiometer (MCP42xx)
-const int DIGIPOT_CS     = 4;
-const int DIGIPOT_DIN    = 1;
-const int DIGIPOT_SCLK   = 0;
+const int DIGIPOT_CS = 4;
+const int DIGIPOT_DIN = 1;
+const int DIGIPOT_SCLK = 0;
 
-// Servo pins
-const int SERVO_PIN_A    = 10;
-const int SERVO_PIN_B    = 9;
-const int SERVO_PIN_C    = 11;
+// Servo pins 
+const int SERVO_PIN_A = 10;
+const int SERVO_PIN_B = 9;
+const int SERVO_PIN_C = 11;
 
-// Button press timings [ms]
-const unsigned long SHORT_PRESS_TIME  = 50;
-const unsigned long LONG_PRESS_TIME   = 1000;
-const unsigned long DOUBLE_PRESS_TIME = 350;
+// ---- Smoothing Factors ----
+const float IR_ALPHA  = 0.8;    // IR signal low-pass filter
+const float alpha = 0.7;  // Smoothing factor 
 
 // ---- Globals ----
 // IR measurements and center tracking
-int ambientLight[16] = {0};
-int irLight[16]      = {0};
-float irSignal[16]   = {0.0};
+int ambientLight[16] = { 0 };
+int irLight[16] = { 0 };
+float irSignal[16] = { 0.0 };
 
-float centerX        = 0.0;
-float centerY        = 0.0;
-float setpointX      = 0.0;
-float setpointY      = 0.0;
+float centerX = 0.0;
+float centerY = 0.0;
+float setpointX = 0.0;
+float setpointY = 0.0;
 
 // PID state
-float lastErrorX     = 0.0;
-float lastErrorY     = 0.0;
-float integralX      = 0.0;
-float integralY      = 0.0;
+float lastErrorX = 0.0;
+float lastErrorY = 0.0;
+float integralX = 0.0;
+float integralY = 0.0;
+
+float outputX = 0, outputY = 0;  // OUTPUTS OF PID
 
 // Ball tracking
-bool ballWasOnPlate  = false;
+bool ballWasOnPlate = false;
 unsigned long ballLostTime = 0;
+unsigned long ballFoundTime = 0;
 
-// Button state
-bool buttonPressed       = false;
-unsigned long pressStart = 0;
-unsigned long lastPress  = 0;
-bool singlePressFlag     = false;
+// BaBot Modes
+enum BaBotMode {
+  ON,
+  OFF,
+  ASSEMBLY
+};
+BaBotMode mode = ON;  // Initial state
 
-// Trajectory
-float trajectoryAngle = 0.0;
+// === ENUM FOR PRESS TYPES ===
+enum ButtonPress {
+  NO_PRESS,
+  SINGLE_PRESS,
+  DOUBLE_PRESS,
+  LONG_PRESS
+};
+
+
+// === TIMING CONFIG ===
+const unsigned long DEBOUNCE_TIME = 50;
+const unsigned long DOUBLE_PRESS_GAP = 500;
+const unsigned long LONG_PRESS_TIME = 1000;
+
+// === STATE VARIABLES ===
+bool buttonWasPressed = false;
+unsigned long buttonDownTime = 0;
+unsigned long lastPressTime = 0;
+int pressCount = 0;
+
+// OptimalPot
+int optimalPot;
 
 // ---- Objects ----
 CD74HC4067 mux(5, 13, 6, 12);  // S0,S1 -> 13, S2->6, S3->12
 Servo servoA, servoB, servoC;
 
-// ---- Kalman Filter Definition ----
-struct KalmanFilter {
-  float x = 0, v = 0, p = 1;
-  const float q = 0.3, r = 1.0;
-  void update(float z, float dt) {
-    // Prediction
-    x += v * dt;
-    p += q;
-    // Correction
-    float k = p / (p + r);
-    v  += k * ((z - x) / dt);
-    x  += k * (z - x);
-    p *= (1 - k);
-  }
-};
-KalmanFilter kfX, kfY;
-
-// ---- Function Prototypes ----
-void     blinkLED(unsigned long interval);
-void     measureIR();
-void     setDigitalPot(byte value);
-bool     ballOnPlate();
-void     computeCenter(float rawX, float rawY);
-void     pidControl(float input, float setpoint, float &lastError, float &integral, float &output);
-void     movePlatform(float rollDeg, float pitchDeg, float height);
-void     moveServos(float a, float b, float c);
-void     checkButton();
-void     calculateWeightedCenter(const float ir[], float &x, float &y);
-void     sendSerialData();
-void     setTrajectory(float radius, float speed);
 
 // ---- Arduino Setup ----
 void setup() {
@@ -123,59 +115,108 @@ void setup() {
   servoC.attach(SERVO_PIN_C);
 
   // Initialize platform to neutral
-  movePlatform(0, -20, 60);
-  delay(1000);
+  movePlatform(0, 0, PLATE_HEIGHT);
 
   Serial.begin(115200);
+  delay(1000);
 }
 
+int skipCounter = 0;
 // ---- Main Loop ----
 void loop() {
   static unsigned long lastTime = 0;
   unsigned long now = millis();
   float dt = (now - lastTime) / 1000.0;
 
-  blinkLED(300);
-  setDigitalPot(255);
   measureIR();
-  checkButton();
-  sendSerialData();
 
-  if (ballOnPlate()) {
-    ballWasOnPlate = true;
-    ballLostTime = now;
+  setDigitalPot(235); //255=0kOhm 0=100kOhm
+  
+  float rawX, rawY;
+  calculateWeightedCenter(irSignal, rawX, rawY);
+  // Apply Exponential Moving Average
+  centerX = alpha * rawX + (1 - alpha) * centerX;
+  centerY = alpha * rawY + (1 - alpha) * centerY;
 
-    // Raw center calculation
-    float rawX, rawY;
-    calculateWeightedCenter(irSignal, rawX, rawY);
+  // sendSerialData();
 
-    // Kalman & EMA filters
-    kfX.update(rawX, dt);
-    kfY.update(rawY, dt);
-    centerX = EMA_ALPHA * rawX + (1 - EMA_ALPHA) * kfX.x;
-    centerY = EMA_ALPHA * rawY + (1 - EMA_ALPHA) * kfY.x;
+  ButtonPress result = checkButton();
 
-    // PID
-    float outputX, outputY;
-    pidControl(centerX, setpointX, lastErrorX, integralX, outputX);
-    pidControl(centerY, setpointY, lastErrorY, integralY, outputY);
-
-    movePlatform(outputX, outputY, 60);
+  switch (result) {
+    case SINGLE_PRESS:
+      // Serial.println("Single Press");
+      if (mode == OFF) {
+        mode = ON;
+      } else if (mode == ON) {
+        mode = OFF;
+      }
+      break;
+    case DOUBLE_PRESS:
+      // Serial.println("Double Press");
+      break;
+    case LONG_PRESS:
+      if (mode != ASSEMBLY) {
+        mode = ASSEMBLY;
+      } else if (mode == ASSEMBLY) {
+        mode = OFF;
+      }
+      // Serial.println("Long Press");
+      break;
+    default:
+      break;
   }
-  else {
-    if (ballWasOnPlate && now - ballLostTime < 1000) {
-      // hold last
-      movePlatform(0, 0, 60);
-    } else {
-      ballWasOnPlate = false;
-      integralX = integralY = 0;
-      lastErrorX = lastErrorY = 0;
-      setpointX = setpointY = 0;
-      movePlatform(0, -20, 60);
-    }
-  }
 
-  lastTime = now;
+  switch (mode) {
+    case ON:
+      blinkLED(300);
+      if (ballOnPlate()) {
+        digitalWrite(LED_PIN, HIGH);  //Turn on light
+        if (ballWasOnPlate == false) {
+          ballFoundTime = millis();
+          skipCounter = 2;  // Ignore next 10 cycles
+          lastErrorX, lastErrorY = setpointX - centerX, setpointY - centerY;
+        }
+        ballWasOnPlate = true;
+        ballLostTime = millis();  // Reset the timer since the ball is detected
+        if (skipCounter > 0) {
+          skipCounter--;
+          return; // Skip rest of loop
+        }
+
+        // PID
+        pidControl(centerX, setpointX, lastErrorX, integralX, outputX);
+        pidControl(centerY, setpointY, lastErrorY, integralY, outputY);
+
+        movePlatform(outputX, outputY, PLATE_HEIGHT);
+
+      } else {
+        if (ballWasOnPlate && millis() - ballLostTime < 1000) {
+          // hold last
+          movePlatform(outputX, outputY, PLATE_HEIGHT);
+        } 
+        else {
+          ballWasOnPlate = false;
+          integralX = integralY = 0;
+          lastErrorX = lastErrorY = 0;
+          setpointX = setpointY = 0;
+          movePlatform(0, 0, PLATE_HEIGHT);
+        }
+      }
+      break;
+
+    case OFF:
+      digitalWrite(LED_PIN, LOW);  //Turn off light
+      movePlatform(0, 0, PLATE_HEIGHT);
+      break;
+
+    case ASSEMBLY:
+      blinkLED(50);
+      moveServos(0, 0, 0);
+      break;
+
+    default:
+      break;
+  }
 }
 
 // ---- Utility Functions ----
@@ -206,15 +247,15 @@ void measureIR() {
   delay(1);
   for (int i = 0; i < 16; i++) {
     mux.channel(i);
-    delayMicroseconds(250);
+    delayMicroseconds(400);
     ambientLight[i] = analogRead(IR_RECEIVER_PIN);
   }
   // IR On
   digitalWrite(IR_LED_PIN, HIGH);
-  delay(5);
+  delay(4);
   for (int i = 0; i < 16; i++) {
     mux.channel(i);
-    delayMicroseconds(250);
+    delayMicroseconds(400);
     irLight[i] = analogRead(IR_RECEIVER_PIN);
   }
   // Compute signal
@@ -222,17 +263,21 @@ void measureIR() {
     float delta = irLight[i] - ambientLight[i];
     irSignal[i] = IR_ALPHA * delta + (1 - IR_ALPHA) * irSignal[i];
   }
+
+  Serial.print("irLight ");
+  Serial.println(irLight[0]);
+  Serial.print("ambientLight ");
+  Serial.println(ambientLight[0]);
 }
 
+const float BALL_THRESHOLD = 200.0;
 bool ballOnPlate() {
-  long sum = 0;
-  int maxVal = irSignal[0];
-  for (int i = 0; i < 16; i++) {
-    sum += irSignal[i];
-    maxVal = max(maxVal, int(irSignal[i]));
+  float minV = irSignal[0], maxV = irSignal[0];
+  for (int i = 1; i < 16; i++) {
+    minV = min(minV, irSignal[i]);
+    maxV = max(maxV, irSignal[i]);
   }
-  float avg = sum / 16.0;
-  return maxVal > 1.5 * avg;
+  return (maxV - minV >= BALL_THRESHOLD);
 }
 
 void pidControl(float input, float target, float &lastErr, float &integ, float &out) {
@@ -244,9 +289,9 @@ void pidControl(float input, float target, float &lastErr, float &integ, float &
 }
 
 void movePlatform(float rollDeg, float pitchDeg, float height) {
-  float roll  = -rollDeg * DEG2RAD;
+  float roll = -rollDeg * DEG2RAD;
   float pitch = -pitchDeg * DEG2RAD;
-  float baseAngle[3]    = {0, 120 * DEG2RAD, 240 * DEG2RAD};
+  float baseAngle[3] = { 0, 120 * DEG2RAD, 240 * DEG2RAD };
   float platX[3], platY[3], platZ[3], angles[3];
 
   // Transform platform points
@@ -263,7 +308,9 @@ void movePlatform(float rollDeg, float pitchDeg, float height) {
     float y1 = py * cos(roll) - z1 * sin(roll);
     float z2 = py * sin(roll) + z1 * cos(roll);
 
-    platX[i] = x1; platY[i] = y1; platZ[i] = z2;
+    platX[i] = x1;
+    platY[i] = y1;
+    platZ[i] = z2;
   }
   // Calculate servo angles
   for (int i = 0; i < 3; i++) {
@@ -275,18 +322,18 @@ void movePlatform(float rollDeg, float pitchDeg, float height) {
     float dz = platZ[i];
     float dxl = dx * cos(a) + dy * sin(a);
     float dyl = dz;
-    float d = sqrt(dxl*dxl + dyl*dyl);
-    float theta = atan2(dyl, dxl) - acos(constrain((R1*R1 + d*d - R2*R2)/(2*R1*d), -1, 1));
+    float d = sqrt(dxl * dxl + dyl * dyl);
+    float theta = atan2(dyl, dxl) - acos(constrain((R1 * R1 + d * d - R2 * R2) / (2 * R1 * d), -1, 1));
     angles[i] = theta * RAD2DEG;
   }
-  moveServos(angles[0], angles[1], angles[2]);
+  moveServos(angles[0], angles[1], angles[2]);  // ordre a changer pour respecter pcb
 }
 
 void moveServos(float a, float b, float c) {
   a = constrain(a, -10, 65);
   b = constrain(b, -10, 65);
   c = constrain(c, -10, 65);
-  servoA.write(100 - a);
+  servoA.write(100 - a);  // BABOT blanc PCBWAY
   servoB.write(100 - b);
   servoC.write(100 - c);
 }
@@ -298,71 +345,80 @@ void calculateWeightedCenter(const float arr[], float &x, float &y) {
     minV = min(minV, arr[i]);
     maxV = max(maxV, arr[i]);
   }
-  if (maxV - minV < 150) { x = y = 0; return; }
 
-  const float coordsX[16] = {0,1,2,3, 0,1,2,3, 0,1,2,3, 0,1,2,3};
-  const float coordsY[16] = {0,0,0,0, 1,1,1,1, 2,2,2,2, 3,3,3,3};
-  float sumW=0, wx=0, wy=0;
+  if(!ballOnPlate()){
+    x = y = 0;
+    return;
+  }
+
+  const float coordsX[16] = { 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3 };
+  const float coordsY[16] = { 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3 };
+  float sumW = 0, wx = 0, wy = 0;
   for (int i = 0; i < 16; i++) {
-    float norm = pow((arr[i] - minV)/(maxV - minV), 4);
+    float norm = pow((arr[i] - minV) / (maxV - minV), 4);
     wx += coordsX[i] * norm;
     wy += coordsY[i] * norm;
     sumW += norm;
   }
-  x = wx/sumW - 1.5;
-  y = wy/sumW - 1.5;
+  x = wx / sumW - 1.5;
+  y = wy / sumW - 1.5;
 }
 
-void checkButton() {
-  bool state = digitalRead(BUTTON_PIN);
-  unsigned long now = millis();
-  static bool lastState = LOW;
-
-  if (state && !lastState) {
-    pressStart = now;
-    buttonPressed = true;
-  }
-  if (buttonPressed && state && (now - pressStart > LONG_PRESS_TIME)) {
-    Serial.println("Long Press Detected");
-    buttonPressed = false;
-  }
-  if (buttonPressed && !state) {
-    unsigned long dur = now - pressStart;
-    if (dur >= SHORT_PRESS_TIME && dur < LONG_PRESS_TIME) {
-      if (now - lastPress < DOUBLE_PRESS_TIME) {
-        Serial.println("Double Press Detected");
-        singlePressFlag = false;
-      } else {
-        singlePressFlag = true;
-      }
-      lastPress = now;
-    }
-    buttonPressed = false;
-  }
-  if (singlePressFlag && now - lastPress > DOUBLE_PRESS_TIME) {
-    Serial.println("Single Press Detected");
-    singlePressFlag = false;
-  }
-  lastState = state;
-}
 
 void sendSerialData() {
   for (int i = 0; i < 16; i++) {
     Serial.print(irSignal[i]);
     Serial.print(',');
   }
-  Serial.print(centerX); Serial.print(',');
-  Serial.print(centerY); Serial.print(',');
-  Serial.print(setpointX); Serial.print(',');
+  Serial.print(centerX);
+  Serial.print(',');
+  Serial.print(centerY);
+  Serial.print(',');
+  Serial.print(setpointX);
+  Serial.print(',');
   Serial.println(setpointY);
 }
 
-void setTrajectory(float radius, float speed) {
+
+// === BUTTON CHECK FUNCTION ===
+ButtonPress checkButton() {
+  static bool lastButtonState = LOW;
+  bool currentButtonState = digitalRead(BUTTON_PIN);
   unsigned long now = millis();
-  static unsigned long lastT = 0;
-  float dt = (now - lastT)/2000.0;
-  trajectoryAngle += speed * dt;
-  setpointX = radius * cos(trajectoryAngle);
-  setpointY = radius * sin(trajectoryAngle);
-  lastT = now;
+
+  ButtonPress result = NO_PRESS;
+
+  // === DETECT PRESS ===
+  if (currentButtonState == HIGH && lastButtonState == LOW) {
+    // Button just pressed
+    buttonDownTime = now;
+    buttonWasPressed = true;
+  }
+
+  // === DETECT RELEASE ===
+  if (currentButtonState == LOW && lastButtonState == HIGH) {
+    unsigned long pressDuration = now - buttonDownTime;
+    buttonWasPressed = false;
+
+    if (pressDuration >= LONG_PRESS_TIME) {
+      result = LONG_PRESS;
+      pressCount = 0;
+    } else {
+      pressCount++;
+      lastPressTime = now;
+    }
+  }
+
+  // === HANDLE SINGLE/DOUBLE ===
+  if (pressCount > 0 && (now - lastPressTime > DOUBLE_PRESS_GAP)) {
+    if (pressCount == 1) {
+      result = SINGLE_PRESS;
+    } else if (pressCount == 2) {
+      result = DOUBLE_PRESS;
+    }
+    pressCount = 0;
+  }
+
+  lastButtonState = currentButtonState;
+  return result;
 }
