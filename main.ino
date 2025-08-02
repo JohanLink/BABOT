@@ -126,7 +126,6 @@ int skipCounter = 0;
 void loop() {
   static unsigned long lastTime = 0;
   unsigned long now = millis();
-  float dt = (now - lastTime) / 1000.0;
 
   measureIR();
 
@@ -174,7 +173,8 @@ void loop() {
         if (ballWasOnPlate == false) {
           ballFoundTime = millis();
           skipCounter = 2;  // Ignore next 10 cycles
-          lastErrorX, lastErrorY = setpointX - centerX, setpointY - centerY;
+          lastErrorX = setpointX - centerX; 
+          lastErrorY = setpointY - centerY;
         }
         ballWasOnPlate = true;
         ballLostTime = millis();  // Reset the timer since the ball is detected
