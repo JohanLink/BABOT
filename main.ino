@@ -41,7 +41,7 @@ const int SERVO_PIN_C     = 9;
 
 const float IR_SMOOTH_ALPHA     = 0.7;
 const float OUTPUT_SMOOTH_ALPHA = 0.9;
-const float BALL_THRESHOLD      = 250.0;
+const float BALL_THRESHOLD      = 350.0;
 const float VEL_SCALE           = 0.001;
 
 const unsigned long DOUBLE_PRESS_GAP = 500;
